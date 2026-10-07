@@ -1,12 +1,18 @@
 // POST /.netlify/functions/paynow-init
 // Body (JSON): { reference, amount, additionalinfo, returnurl, resulturl,
 //                authemail?, authphone?, authname?, redirect? }
-// Server: appends Integration ID + Key from env, computes request hash,
-// POSTs URL-encoded to Paynow initiatetransaction, parses the text
-// response (Status/BrowserUrl/PollUrl/Hash), validates the response hash,
-// then either 302-redirects to browserurl (?redirect=1) or returns JSON.
+// Phone-only checkout: when authemail is missing but authphone is given,
+// a placeholder "client_<digits>@placeholder.com" email is generated so
+// Paynow Express Checkout gets BOTH authemail + authphone.
+// Hash rule (per docs): EVERY sent field except "hash", concatenated in
+// field order, + key, SHA512, uppercase hex — so optional fields ARE hashed.
 // Env: PAYNOW_INTEGRATION_ID, PAYNOW_INTEGRATION_KEY (required).
 // Docs: https://developers.paynow.co.zw/docs/paynow/initiate_transaction/
+//       https://developers.paynow.co.zw/docs/paynow/generating_hash/
+// Normalise a phone to digits only, e.g. "+263 71 234 5678" -> "263712345678".
+function normPhone(phone) {
+  return String(phone || "").replace(/\D/g, "").slice(0, 20);
+}
 const crypto = require("crypto");
 
 const GATEWAY =
@@ -142,23 +148,43 @@ exports.handler = async (event) => {
     status: out.status, browserurl: out.browserurl, pollurl: out.pollurl,
     paynowreference: out.paynowreference, hashValid: true,
     reference, amount: amountStr,
+    authemail: out.authemail, authphone: out.authphone,
+    authemailGenerated: out.authemailGenerated,
   });
 };
 
 async function initTransaction(p, creds) {
+  // Phone-only checkout: missing/empty authemail + a usable phone ->
+  // generate "client_<digits>@placeholder.com" so Express Checkout gets BOTH.
+  const phone = normPhone(p.authphone);
+  let email = String(p.authemail || "").trim().slice(0, 128);
+  const emailGenerated = !email && !!phone;
+  if (emailGenerated) {
+    email = "client_" + phone + "@placeholder.com";
+  }
+  // Build ordered field list; request hash covers EVERY sent field except
+  // "hash" (concatenated in field order + key). Optional authemail/authphone/
+  // authname MUST be hashed when sent, else Paynow rejects with hash mismatch.
+  const fields = [
+    ["id", String(creds.id)],
+    ["reference", p.reference],
+    ["amount", p.amountStr],
+    ["additionalinfo", p.additionalinfo],
+    ["returnurl", p.returnurl],
+    ["resulturl", p.resulturl],
+    ["status", "Message"],
+  ];
+  if (email) fields.push(["authemail", email]);
+  if (phone) fields.push(["authphone", phone]);
+  if (p.authname) fields.push(["authname", String(p.authname).slice(0, 128)]);
   const requestHash = crypto
     .createHash("sha512")
-    .update(creds.id + p.reference + p.amountStr + p.additionalinfo + p.returnurl + p.resulturl + "Message" + creds.key, "utf8")
+    .update(fields.map((f) => f[1]).join("") + creds.key, "utf8")
     .digest("hex")
     .toUpperCase();
-  const form = new URLSearchParams({
-    id: String(creds.id), reference: p.reference, amount: p.amountStr,
-    additionalinfo: p.additionalinfo, returnurl: p.returnurl,
-    resulturl: p.resulturl, status: "Message", hash: requestHash,
-  });
-  if (p.authemail) form.set("authemail", String(p.authemail).slice(0, 128));
-  if (p.authphone) form.set("authphone", String(p.authphone).slice(0, 32));
-  if (p.authname) form.set("authname", String(p.authname).slice(0, 128));
+  const form = new URLSearchParams();
+  fields.forEach((f) => form.set(f[0], f[1]));
+  form.set("hash", requestHash);
 
   let responseText = "";
   try {
@@ -179,10 +205,13 @@ async function initTransaction(p, creds) {
     return { ok: false, http: 502, error: "Paynow response hash mismatch. Transaction NOT started.", responseText };
   }
   return { ok: true, status: parsed.status, browserurl: parsed.browserurl,
-    pollurl: parsed.pollurl, paynowreference: parsed.paynowreference };
+    pollurl: parsed.pollurl, paynowreference: parsed.paynowreference,
+    authemail: email || null, authphone: phone || null,
+    authemailGenerated: emailGenerated };
 }
 
 exports.parseResponseText = parseResponseText;
 exports.validResponseHash = validResponseHash;
 exports.initTransaction = initTransaction;
+exports.normPhone = normPhone;
 
