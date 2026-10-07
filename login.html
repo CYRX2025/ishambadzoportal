@@ -307,6 +307,11 @@ body{
         <button class="on" id="pmPaynow" type="button"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="7" y1="15" x2="11" y2="15"/></svg> Paynow</button>
       </div>
       <div id="payInstruction" class="sub" style="margin:6px 0 12px"></div>
+      <div class="field" style="text-align:left">
+        <label for="payPhone">EcoCash number (for express checkout)</label>
+        <input id="payPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 07 712 345 678">
+      </div>
+      <div id="payErr" class="sub" style="display:none;color:var(--red,#ff5c7a);margin:0 0 10px"></div>
       <button class="btn" id="payConfirm" type="button">Confirm payment &amp; add tokens</button>
       <button class="btn ghost" id="payCancel" type="button" style="margin-top:8px">Cancel</button>
     </div>
@@ -583,6 +588,16 @@ function renderTopups(){
 function openPay(){
   pendingTopup = { tokens:+this.dataset.tokens, usd:this.dataset.usd };
   renderPay();
+  /* Pre-fill the EcoCash number from the verified account; user can edit it. */
+  try {
+    var ph = $("payPhone");
+    if(ph && !ph.value){
+      var cur = (wallet && wallet.deviceUser) ? String(wallet.deviceUser) : "";
+      if(!cur){ var u = $("username"); if(u) cur = u.value; }
+      if(cur) ph.value = cur;
+    }
+  } catch(e){}
+  var pe = $("payErr"); if(pe){ pe.style.display = "none"; pe.textContent = ""; }
   $("payModal").classList.add("show");
 }
 function renderPay(){
@@ -623,7 +638,26 @@ function payWithPaynow(){
   if(paynowBusy || !pendingTopup) return;
   paynowBusy = true;
   var btn = $("payConfirm"), old = btn ? btn.textContent : "";
+  /* Extract package amount + name/description + user's phone (authphone). */
+  var phone = "";
+  try { var phe = $("payPhone"); if(phe) phone = phe.value.trim(); } catch(e){}
+  try {
+    if(!phone && wallet && wallet.deviceUser) phone = String(wallet.deviceUser);
+    if(!phone){ var ue = $("username"); if(ue) phone = ue.value.trim(); }
+  } catch(e2){}
+  var name = "";
+  try { if(wallet && wallet.deviceName) name = String(wallet.deviceName); } catch(e3){}
+  var errEl = $("payErr");
+  function payFail(msg){
+    paynowBusy = false;
+    if(btn){ btn.disabled = false; btn.textContent = old || "Pay with Paynow"; }
+    if(errEl){ errEl.textContent = msg; errEl.style.display = "block"; }
+    if(typeof toast === "function"){ toast(msg, "err"); }
+    else { alert(msg); }
+  }
+  /* Loading state. */
   if(btn){ btn.disabled = true; btn.textContent = "Contacting Paynow…"; }
+  if(errEl){ errEl.style.display = "none"; errEl.textContent = ""; }
   /* Persist the pending purchase keyed by reference so resulturl/return pages can credit it. */
   var reference = payRef();
   try {
@@ -639,11 +673,18 @@ function payWithPaynow(){
     returnurl: here + (here.indexOf("?") === -1 ? "?" : "&") + "paynow_ref=" + encodeURIComponent(reference),
     resulturl: here + (here.indexOf("?") === -1 ? "?" : "&") + "paynow_result=1"
   };
+  /* Phone + name go to the signer so Paynow gets authphone/authname;
+     a missing email is auto-filled server-side with client_<phone>@placeholder.com. */
+  if(phone) payload.authphone = phone;
+  if(name) payload.authname = name;
   fetch(PAYNOW_INIT_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
-  }).then(function(r){ return r.json(); }).then(function(signed){
+  }).then(function(r){
+    if(!r.ok){ throw new Error("Paynow signer unreachable (HTTP " + r.status + ")"); }
+    return r.json();
+  }).then(function(signed){
     if(!signed || !signed.hash){ throw new Error((signed && signed.error) || "Paynow unavailable"); }
     /* Tokens are credited by the resulturl poll / return handler — not here. */
     $paynowPending = { reference: signed.reference, tokens: pendingTopup.tokens };
@@ -658,10 +699,7 @@ function payWithPaynow(){
     if(signed.authname) fields.authname = signed.authname;
     postToGateway(fields);
   }).catch(function(err){
-    paynowBusy = false;
-    if(btn){ btn.disabled = false; btn.textContent = old; }
-    if(typeof toast === "function"){ toast("Paynow: " + err.message + ". Please try again.", "err"); }
-    else { alert("Paynow: " + err.message); }
+    payFail("Paynow: " + err.message + ". Please try again.");
   });
 }
 /* Holds the Paynow reference while away at the gateway; credit lands via resulturl. */

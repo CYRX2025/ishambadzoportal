@@ -271,6 +271,11 @@ body{
         <button class="on" id="pmPaynow" type="button"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="7" y1="15" x2="11" y2="15"/></svg> Paynow</button>
       </div>
       <div id="payInstruction" class="sub" style="margin:6px 0 12px"></div>
+      <div class="field" style="text-align:left">
+        <label for="payPhone">EcoCash number (for express checkout)</label>
+        <input id="payPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 07 712 345 678">
+      </div>
+      <div id="payErr" class="sub" style="display:none;color:#ff5c7a;margin:0 0 10px"></div>
       <button class="btn" id="payConfirm" type="button">Confirm payment &amp; add tokens</button>
       <button class="btn ghost" id="payCancel" type="button" style="margin-top:8px">Cancel</button>
     </div>
@@ -548,7 +553,14 @@ function renderTopups(){
 }
 function openPay(){
   pendingTopup={tokens:+this.dataset.tokens,usd:this.dataset.usd};
-  renderPay(); $("payModal").classList.add("show");
+  renderPay();
+  try{ var _pp=document.getElementById("payPhone");
+    if(_pp&&!_pp.value&&wallet&&wallet.deviceUser) _pp.value=wallet.deviceUser;
+  }catch(_e){}
+  try{ var _pe=document.getElementById("payErr");
+    if(_pe){ _pe.style.display="none"; _pe.textContent=""; }
+  }catch(_e2){}
+  document.getElementById("payModal").classList.add("show");
 }
 function renderPay(){
   $("payUsd").textContent=pendingTopup.usd;
@@ -578,7 +590,20 @@ function payWithPaynow(){
   if(paynowBusy||!pendingTopup) return;
   paynowBusy=true;
   var btn=$("payConfirm"), old=btn?btn.textContent:"";
+  var phone="";
+  try{ var _phe=document.getElementById("payPhone"); if(_phe) phone=_phe.value.trim(); }catch(_e0){}
+  try{ if(!phone&&wallet&&wallet.deviceUser) phone=String(wallet.deviceUser); }catch(_e1){}
+  var custName="";
+  try{ if(wallet&&wallet.deviceName) custName=String(wallet.deviceName); }catch(_e2){}
+  var errEl=document.getElementById("payErr");
+  function payFail(m){
+    paynowBusy=false;
+    if(btn){ btn.disabled=false; btn.textContent=old||"Pay with Paynow"; }
+    if(errEl){ errEl.textContent=m; errEl.style.display="block"; }
+    alert(m);
+  }
   if(btn){ btn.disabled=true; btn.textContent="Contacting Paynow…"; }
+  if(errEl){ errEl.style.display="none"; errEl.textContent=""; }
   var reference=payRef();
   try{
     var pend=JSON.parse(localStorage.getItem("ishambadzo_pending_pay")||"{}");
@@ -590,8 +615,13 @@ function payWithPaynow(){
     additionalinfo:pendingTopup.tokens+" ishambadzo tokens",
     returnurl:here+(here.indexOf("?")===-1?"?":"&")+"paynow_ref="+encodeURIComponent(reference),
     resulturl:here+(here.indexOf("?")===-1?"?":"&")+"paynow_result=1"};
+  if(phone) payload.authphone=phone;
+  if(custName) payload.authname=custName;
   fetch(PAYNOW_INIT_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
-  .then(function(r){ return r.json(); }).then(function(signed){
+  .then(function(r){
+    if(!r.ok){ throw new Error("Paynow signer unreachable (HTTP "+r.status+")"); }
+    return r.json();
+  }).then(function(signed){
     if(!signed||!signed.hash){ throw new Error((signed&&signed.error)||"Paynow unavailable"); }
     var fields={id:signed.id,reference:signed.reference,amount:signed.amount,
       additionalinfo:signed.additionalinfo,returnurl:signed.returnurl,
@@ -601,9 +631,7 @@ function payWithPaynow(){
     if(signed.authname) fields.authname=signed.authname;
     postToGateway(fields);
   }).catch(function(err){
-    paynowBusy=false;
-    if(btn){ btn.disabled=false; btn.textContent=old; }
-    alert("Paynow: "+err.message+". Please try again.");
+    payFail("Paynow: "+err.message+". Please try again.");
   });
 }
 /* Shop tabs: Mbasera vs Internet Yedu */
