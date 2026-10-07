@@ -1,0 +1,12 @@
+{
+  "name": "ishambadzo-portal",
+  "version": "1.0.0",
+  "description": "ishambadzo MikroTik hotspot portal with Paynow integration",
+  "main": "login.html",
+  "scripts": {
+    "build": "echo 'No build required'"
+  },
+  "dependencies": {
+    "paynow": "^2.2.2"
+  }
+}
