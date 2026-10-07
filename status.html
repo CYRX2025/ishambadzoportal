@@ -559,20 +559,14 @@ function renderPay(){
 }
 /* Paynow amounts: strip the "$" for the gateway (e.g. "$0.50" -> "0.50"). */
 function payAmt(u){ return String(u||"").replace(/[^0-9.]/g,""); }
-/* Paynow: server-signed hash -> redirect to gateway. Key stays in the Netlify function env. */
-var PAYNOW_GATEWAY="https://www.paynow.co.zw/interface/initiatetransaction";
-var PAYNOW_HASH_URL="/.netlify/functions/paynow-hash";
+/* Paynow: server-side init -> browserurl. Key stays in the Netlify function env. */
+var PAYNOW_INIT_URL="/.netlify/functions/paynow-init";
 var paynowBusy=false;
 function payRef(){
   var who=""; try{ who=(wallet&&wallet.deviceUser)?String(wallet.deviceUser):""; }catch(e){}
   return ("ISH-"+(who?who.replace(/\D/g,"").slice(-6)+"-":"")+Date.now().toString(36).toUpperCase()).slice(0,32);
 }
-function postToGateway(f){
-  var fm=document.createElement("form");
-  fm.method="POST"; fm.action=PAYNOW_GATEWAY; fm.style.display="none";
-  Object.keys(f).forEach(function(k){ var i=document.createElement("input"); i.type="hidden"; i.name=k; i.value=f[k]; fm.appendChild(i); });
-  document.body.appendChild(fm); fm.submit();
-}
+/* Server-side init: browser never touches the Paynow gateway directly. */
 function payWithPaynow(){
   if(paynowBusy||!pendingTopup) return;
   paynowBusy=true;
@@ -589,12 +583,10 @@ function payWithPaynow(){
     additionalinfo:pendingTopup.tokens+" ishambadzo tokens",
     returnurl:here+(here.indexOf("?")===-1?"?":"&")+"paynow_ref="+encodeURIComponent(reference),
     resulturl:here+(here.indexOf("?")===-1?"?":"&")+"paynow_result=1"};
-  fetch(PAYNOW_HASH_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
-  .then(function(r){ return r.json(); }).then(function(signed){
-    if(!signed||!signed.hash){ throw new Error((signed&&signed.error)||"Paynow unavailable"); }
-    postToGateway({id:signed.id,reference:signed.reference,amount:signed.amount,
-      additionalinfo:signed.additionalinfo,returnurl:signed.returnurl,
-      resulturl:signed.resulturl,status:signed.status,hash:signed.hash});
+  fetch(PAYNOW_INIT_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
+  .then(function(r){ return r.json(); }).then(function(init){
+    if(!init||!init.browserurl){ throw new Error((init&&init.error)||"Paynow unavailable"); }
+    window.location.href=init.browserurl;
   }).catch(function(err){
     paynowBusy=false;
     if(btn){ btn.disabled=false; btn.textContent=old; }
