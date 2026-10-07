@@ -308,11 +308,17 @@ body{
       </div>
       <div id="payInstruction" class="sub" style="margin:6px 0 12px"></div>
       <div class="field" style="text-align:left">
-        <label for="payPhone">EcoCash number (for express checkout)</label>
+        <label for="payEmail">Email (for EcoCash express receipt)</label>
+        <input id="payEmail" type="email" inputmode="email" autocomplete="email" placeholder="e.g. you@example.com">
+      </div>
+      <div class="field" style="text-align:left">
+        <label for="payPhone">EcoCash number (USSD push, no Paynow page)</label>
         <input id="payPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 07 712 345 678">
       </div>
       <div id="payErr" class="sub" style="display:none;color:var(--red,#ff5c7a);margin:0 0 10px"></div>
-      <button class="btn" id="payConfirm" type="button">Confirm payment &amp; add tokens</button>
+      <div id="payStatus" class="sub" style="display:none;margin:0 0 10px"></div>
+      <button class="btn" id="payConfirm" type="button">Pay with EcoCash</button>
+      <button class="btn ghost" id="payCardBtn" type="button" style="margin-top:8px">Pay by card on Paynow instead</button>
       <button class="btn ghost" id="payCancel" type="button" style="margin-top:8px">Cancel</button>
     </div>
   </div>
@@ -604,8 +610,9 @@ function renderPay(){
   $("payUsd").textContent = pendingTopup.usd;
   $("payTokens").textContent = pendingTopup.tokens;
   $("pmPaynow").classList.add("on");
-  $("payInstruction").innerHTML = 'Pay <b>'+pendingTopup.usd+'</b> securely with Paynow. You will be redirected to Paynow to complete payment, then credited automatically.';
-  $("payConfirm").textContent = "Pay with Paynow";
+  $("payInstruction").innerHTML = 'Pay <b>'+pendingTopup.usd+'</b> with EcoCash — a payment prompt is sent straight to your phone, then credited automatically. Or pay by card on Paynow.';
+  $("payConfirm").textContent = "Pay with EcoCash";
+  var _ps = $("payStatus"); if(_ps){ _ps.style.display = "none"; _ps.textContent = ""; }
 }
 /* Paynow amounts: strip the "$" for the gateway (e.g. "$0.50" -> "0.50"). */
 function payAmt(u){ return String(u || "").replace(/[^0-9.]/g, ""); }
@@ -633,30 +640,50 @@ function postToGateway(fields){
   });
   document.body.appendChild(f); f.submit();
 }
-function payWithPaynow(){
-  if(paynowBusy || !pendingTopup) return;
-  paynowBusy = true;
-  var btn = $("payConfirm"), old = btn ? btn.textContent : "";
-  /* Extract package amount + name/description + user's phone (authphone). */
-  var phone = "";
+/* ---- Paynow: EcoCash EXPRESS by default (USSD push, no Paynow page) ----
+   Card/guest checkout via the signed form-POST is the fallback. */
+function payDetails(viaCard){
+  var phone = "", email = "", name = "";
   try { var phe = $("payPhone"); if(phe) phone = phe.value.trim(); } catch(e){}
+  try { var eme = $("payEmail"); if(eme) email = eme.value.trim(); } catch(e0){}
   try {
     if(!phone && wallet && wallet.deviceUser) phone = String(wallet.deviceUser);
     if(!phone){ var ue = $("username"); if(ue) phone = ue.value.trim(); }
+    if(wallet && wallet.deviceName) name = String(wallet.deviceName);
   } catch(e2){}
-  var name = "";
-  try { if(wallet && wallet.deviceName) name = String(wallet.deviceName); } catch(e3){}
-  var errEl = $("payErr");
+  return { phone: phone, email: email, name: name, viaCard: !!viaCard };
+}
+function payMsg(el, text, isErr){
+  if(!el) return;
+  el.textContent = text || "";
+  el.style.display = text ? "block" : "none";
+  if(isErr) el.style.color = "var(--red,#ff5c7a)";
+}
+function payWithPaynow(viaCard){
+  if(paynowBusy || !pendingTopup) return;
+  paynowBusy = true;
+  var btn = $("payConfirm"), old = btn ? btn.textContent : "";
+  var cardBtn = $("payCardBtn");
+  var d = payDetails(viaCard);
+  var errEl = $("payErr"), stEl = $("payStatus");
   function payFail(msg){
     paynowBusy = false;
-    if(btn){ btn.disabled = false; btn.textContent = old || "Pay with Paynow"; }
-    if(errEl){ errEl.textContent = msg; errEl.style.display = "block"; }
+    if(btn){ btn.disabled = false; btn.textContent = old || "Pay with EcoCash"; }
+    if(cardBtn) cardBtn.disabled = false;
+    payMsg(errEl, msg, true);
+    payMsg(stEl, "");
     if(typeof toast === "function"){ toast(msg, "err"); }
     else { alert(msg); }
   }
+  /* Validate BEFORE contacting the signer. Express needs phone + email. */
+  if(!d.viaCard){
+    if(!d.phone){ paynowBusy = false; payMsg(errEl, "Enter your EcoCash number to receive the payment prompt.", true); return; }
+    if(!d.email || d.email.indexOf("@") === -1){ paynowBusy = false; payMsg(errEl, "Enter a valid email address for the EcoCash receipt.", true); return; }
+  }
   /* Loading state. */
-  if(btn){ btn.disabled = true; btn.textContent = "Contacting Paynow…"; }
-  if(errEl){ errEl.style.display = "none"; errEl.textContent = ""; }
+  if(btn){ btn.disabled = true; btn.textContent = d.viaCard ? "Preparing card payment…" : "Sending EcoCash prompt…"; }
+  if(cardBtn) cardBtn.disabled = true;
+  payMsg(errEl, ""); payMsg(stEl, "");
   /* Persist the pending purchase keyed by reference so resulturl/return pages can credit it. */
   var reference = payRef();
   try {
@@ -672,10 +699,11 @@ function payWithPaynow(){
     returnurl: here + (here.indexOf("?") === -1 ? "?" : "&") + "paynow_ref=" + encodeURIComponent(reference),
     resulturl: here + (here.indexOf("?") === -1 ? "?" : "&") + "paynow_result=1"
   };
-  /* Phone + name go to the signer so Paynow gets authphone/authname;
-     a missing email is auto-filled server-side with client_<phone>@placeholder.com. */
-  if(phone) payload.authphone = phone;
-  if(name) payload.authname = name;
+  /* Phone + name go to the signer. Express mode also needs method/phone/email. */
+  if(d.phone) payload.authphone = d.phone;
+  if(d.email) payload.authemail = d.email;
+  if(d.name) payload.authname = d.name;
+  if(!d.viaCard){ payload.method = "ecocash"; payload.phone = d.phone; }
   fetch(PAYNOW_INIT_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -683,11 +711,19 @@ function payWithPaynow(){
   }).then(function(r){
     if(!r.ok){ throw new Error("Paynow signer unreachable (HTTP " + r.status + ")"); }
     return r.json();
-  }).then(function(signed){
+  }).then(function(res){
+    /* MODE: express — USSD push sent, poll for payment, credit on success. */
+    if(res && res.mode === "express"){
+      $paynowPending = { reference: res.reference, tokens: pendingTopup.tokens, pollurl: res.pollurl };
+      payMsg(stEl, (res.instructions || "Approve the payment on your phone.") + " Waiting for confirmation…");
+      if(btn) btn.textContent = "Waiting for EcoCash approval…";
+      payPollExpress(res, 0);
+      return;
+    }
+    var signed = res;
     if(!signed || !signed.hash){ throw new Error((signed && signed.error) || "Paynow unavailable"); }
-    /* Tokens are credited by the resulturl poll / return handler — not here. */
+    /* MODE: card/guest fallback — direct browser POST so Paynow sets cookies. */
     $paynowPending = { reference: signed.reference, tokens: pendingTopup.tokens };
-    /* Direct browser POST to Paynow: lets Paynow set its session cookies. */
     var fields = {
       id: signed.id, reference: signed.reference, amount: signed.amount,
       additionalinfo: signed.additionalinfo, returnurl: signed.returnurl,
@@ -701,6 +737,49 @@ function payWithPaynow(){
     payFail("Paynow: " + err.message + ". Please try again.");
   });
 }
+/* Poll paynow-status for the express USSD payment; credit wallet on success. */
+function payPollExpress(res, n){
+  var tries = (typeof n === "number") ? n : 0;
+  if(tries > 40){ /* ~2 min */
+    paynowBusy = false;
+    var b = $("payConfirm"); if(b){ b.disabled = false; b.textContent = "Pay with EcoCash"; }
+    var cb = $("payCardBtn"); if(cb) cb.disabled = false;
+    payMsg($("payErr"), "No confirmation yet — approve the EcoCash prompt on your phone, then try again.", true);
+    return;
+  }
+  fetch("/.netlify/functions/paynow-status?pollurl=" + encodeURIComponent(res.pollurl) + "&reference=" + encodeURIComponent(res.reference))
+  .then(function(r){ return r.json(); })
+  .then(function(st){
+    if(st && st.paid){
+      try {
+        var pend = JSON.parse(localStorage.getItem("ishambadzo_pending_pay") || "{}");
+        delete pend[res.reference];
+        localStorage.setItem("ishambadzo_pending_pay", JSON.stringify(pend));
+      } catch(e){}
+      wallet.tokens += pendingTopup.tokens;
+      try { saveWallet(wallet); } catch(e2){}
+      try { updateWalletUI(); renderTopups(); if(typeof renderBundles === "function") renderBundles(); } catch(e3){}
+      paynowBusy = false;
+      payMsg($("payStatus"), "Payment confirmed! " + pendingTopup.tokens + " tokens added.");
+      payMsg($("payErr"), "");
+      setTimeout(function(){ try { $("payModal").classList.remove("show"); } catch(e){} }, 1800);
+      return;
+    }
+    if(st && (st.status === "Cancelled" || st.status === "Failed" || st.status === "Disputed")){
+      paynowBusy = false;
+      var b2 = $("payConfirm"); if(b2){ b2.disabled = false; b2.textContent = "Pay with EcoCash"; }
+      var c2 = $("payCardBtn"); if(c2) c2.disabled = false;
+      payMsg($("payErr"), "Payment was " + String(st.status).toLowerCase() + ". Please try again.", true);
+      payMsg($("payStatus"), "");
+      return;
+    }
+    payMsg($("payStatus"), "Waiting for EcoCash approval… (" + (tries + 1) + ")");
+    setTimeout(function(){ payPollExpress(res, tries + 1); }, 3000);
+  })
+  .catch(function(){
+    setTimeout(function(){ payPollExpress(res, tries + 1); }, 3000);
+  });
+}
 /* Holds the Paynow reference while away at the gateway; credit lands via resulturl. */
 var $paynowPending = null;
 /* ---- Shop tabs: Mbasera vs Internet Yedu ---- */
@@ -712,7 +791,10 @@ function switchShop(which){
   $("paneBundles").classList.toggle("on", !w);
 }
 function confirmPay(){
-  if(pendingTopup){ payWithPaynow(); }
+  if(pendingTopup){ payWithPaynow(false); }
+}
+function confirmPayCard(){
+  if(pendingTopup){ payWithPaynow(true); }
 }
 
 function toast(msg, kind){
@@ -948,6 +1030,7 @@ if(wallet.connected){   /* already online → go straight to the dashboard */
 $("modeSwitch").onclick = function(){ setMode(mode === "create" ? "login" : "create"); };
 $("verifyBtn").onclick = doVerify;
 $("payConfirm").onclick = confirmPay;
+var _pcb = $("payCardBtn"); if(_pcb) _pcb.onclick = confirmPayCard;
 $("payCancel").onclick = function(){ $("payModal").classList.remove("show"); };
 $("payModal").onclick = function(e){ if(e.target===this){ this.classList.remove("show"); } };
 if(wallet.deviceUser){ $("username").value = wallet.deviceUser; }

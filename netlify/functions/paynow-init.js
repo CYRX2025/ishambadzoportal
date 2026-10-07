@@ -1,21 +1,22 @@
 // POST /.netlify/functions/paynow-init
-// SIGN-AND-RETURN ONLY — never POSTs to Paynow itself. The browser must
-// POST the signed payload straight to the gateway via an auto-submitting
-// form so Paynow can set its session cookies (server-side fetch breaks
-// this and causes "Please login using Guest Payment" errors).
-// Body (JSON): { reference, amount, additionalinfo, returnurl, resulturl,
-//                authemail?, authphone?, authname? }
-// Phone-only checkout: missing/empty authemail + usable authphone ->
-// placeholder "client_<digits>@placeholder.com" is generated AND returned.
-// Returns JSON: { id, reference, amount, additionalinfo, returnurl,
-//   resulturl, status, authemail?, authphone?, authname?,
-//   authemailGenerated, hash, gateway }
-// The browser then builds a hidden form and submits it to gateway.
-// Hash rule (per docs): EVERY returned field except "hash", concatenated
-// in field order, + key, SHA512, uppercase hex.
+// TWO MODES (mode auto-selected):
+//  1. SIGN-AND-RETURN (default, browser form-POST to initiatetransaction):
+//     Body: { reference, amount, additionalinfo, returnurl, resulturl,
+//             authemail?, authphone?, authname? }
+//     Returns the complete signed payload as JSON; the browser submits it
+//     via a hidden auto-posting form so Paynow sets its session cookies.
+//     NOTE: this is ALWAYS the guest-checkout page — authemail/authphone
+//     only PRE-FILL the form; they never skip it.
+//  2. ECOCASH EXPRESS (server-side remotetransaction, no Paynow page at all):
+//     Body: { ..., method:"ecocash", phone:"077...", authemail:"user@x.com" }
+//     Server POSTs to /interface/remotetransaction; Paynow pushes a USSD
+//     prompt to the handset. Returns { ok:true, pollurl, paynowreference,
+//     instructions } — frontend shows instructions + polls paynow-status.
+//     Docs: https://developers.paynow.co.zw/docs/paynow/express_checkout_transactions/
+//           https://developers.paynow.co.zw/docs/paynow/initiate_mobile_transaction/
 // Env: PAYNOW_INTEGRATION_ID, PAYNOW_INTEGRATION_KEY (required).
-// Docs: https://developers.paynow.co.zw/docs/paynow/initiate_transaction/
-//       https://developers.paynow.co.zw/docs/paynow/generating_hash/
+//      PAYNOW_GATEWAY (init override), PAYNOW_REMOTE_GATEWAY (remote override),
+//      PAYNOW_RETURN_URL / PAYNOW_RESULT_URL (fallbacks).
 // Normalise a phone to digits only, e.g. "+263 71 234 5678" -> "263712345678".
 function normPhone(phone) {
   return String(phone || "").replace(/\D/g, "").slice(0, 20);
@@ -25,6 +26,9 @@ const crypto = require("crypto");
 const GATEWAY =
   process.env.PAYNOW_GATEWAY ||
   "https://www.paynow.co.zw/interface/initiatetransaction";
+const REMOTE_GATEWAY =
+  process.env.PAYNOW_REMOTE_GATEWAY ||
+  "https://www.paynow.co.zw/interface/remotetransaction";
 const FALLBACK_RETURN = process.env.PAYNOW_RETURN_URL || "/";
 const FALLBACK_RESULT = process.env.PAYNOW_RESULT_URL || "/";
 
@@ -138,13 +142,46 @@ exports.handler = async (event) => {
   const additionalinfo = String(body.additionalinfo || "ishambadzo token top-up").slice(0, 255);
   const returnurl = String(body.returnurl || FALLBACK_RETURN);
   const resulturl = String(body.resulturl || FALLBACK_RESULT);
+  const method = String(body.method || "").trim().toLowerCase();
+
+  // MODE 2: EcoCash express — server-side remotetransaction (USSD push,
+  // no Paynow page). Requires a real customer email + the wallet number.
+  if (method === "ecocash" || method === "onemoney") {
+    const expressEmail = String(body.authemail || "").trim().slice(0, 128);
+    const expressPhone = normPhone(body.phone || body.authphone);
+    if (!expressEmail || expressEmail.indexOf("@") === -1) {
+      return json(400, {
+        error: "A valid email address (authemail) is required for EcoCash express checkout.",
+        mode: "express",
+      });
+    }
+    if (!expressPhone) {
+      return json(400, {
+        error: "A valid EcoCash number (phone) is required for express checkout.",
+        mode: "express",
+      });
+    }
+    const out = await remoteTransaction(
+      { reference, amountStr, additionalinfo, returnurl, resulturl,
+        authemail: expressEmail, phone: expressPhone, method },
+      { id: ID, key: KEY, gateway: REMOTE_GATEWAY }
+    );
+    if (!out.ok) return json(out.http || 502, { error: out.error, mode: "express", responseText: out.responseText });
+    return json(200, {
+      ok: true, mode: "express", status: out.status, reference,
+      amount: amountStr, pollurl: out.pollurl,
+      paynowreference: out.paynowreference, instructions: out.instructions,
+    });
+  }
+
+  // MODE 1 (default): sign-and-return for the browser guest-checkout form.
   const signed = signPayload(
     { reference, amountStr, additionalinfo, returnurl, resulturl,
       authemail: body.authemail, authphone: body.authphone, authname: body.authname },
     { id: ID, key: KEY }
   );
   return json(200, {
-    id: ID, reference, amount: amountStr, additionalinfo, returnurl, resulturl,
+    mode: "form", id: ID, reference, amount: amountStr, additionalinfo, returnurl, resulturl,
     status: "Message", hash: signed.hash, gateway: GATEWAY,
     ...(signed.authemail ? { authemail: signed.authemail } : {}),
     ...(signed.authphone ? { authphone: signed.authphone } : {}),
@@ -152,6 +189,56 @@ exports.handler = async (event) => {
     authemailGenerated: signed.authemailGenerated,
   });
 };
+
+/* MODE 2: server-side EcoCash/OneMoney express via remotetransaction.
+ * Field order: base fields + authemail + phone + method, ALL hashed.
+ * Returns instructions for the user + pollurl (NO browser redirect). */
+async function remoteTransaction(p, creds) {
+  const fields = [
+    ["id", String(creds.id)],
+    ["reference", p.reference],
+    ["amount", p.amountStr],
+    ["additionalinfo", p.additionalinfo],
+    ["returnurl", p.returnurl],
+    ["resulturl", p.resulturl],
+    ["authemail", p.authemail],
+    ["phone", p.phone],
+    ["method", p.method],
+    ["status", "Message"],
+  ];
+  const hash = crypto
+    .createHash("sha512")
+    .update(fields.map((f) => f[1]).join("") + creds.key, "utf8")
+    .digest("hex")
+    .toUpperCase();
+  const form = new URLSearchParams();
+  fields.forEach((f) => form.set(f[0], f[1]));
+  form.set("hash", hash);
+
+  let responseText = "";
+  try {
+    const res = await fetch(creds.gateway, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    });
+    responseText = await res.text();
+  } catch (e) {
+    return { ok: false, http: 502, error: "Could not reach Paynow: " + (e && e.message ? e.message : e) };
+  }
+  const parsed = parseResponseText(responseText);
+  if (parsed.status.toLowerCase() === "error" || !parsed.pollurl) {
+    return { ok: false, http: 502, error: parsed.error || "Paynow rejected the express transaction", responseText };
+  }
+  if (!validResponseHash(parsed, creds.key)) {
+    return { ok: false, http: 502, error: "Paynow response hash mismatch. Transaction NOT started.", responseText };
+  }
+  return { ok: true, status: parsed.status, pollurl: parsed.pollurl,
+    paynowreference: parsed.paynowreference,
+    instructions: parsed.raw.instructions
+      ? decodeURIComponent(String(parsed.raw.instructions).replace(/\+/g, "%20"))
+      : "Approve the payment on your phone." };
+}
 
 /* Pure sign-and-return: build the ordered field list (incl. the
  * phone-fallback email), hash EVERY field except "hash" in order + key. */
@@ -182,11 +269,12 @@ function signPayload(p, creds) {
     authname: authname || null, authemailGenerated };
 }
 
-/* parseResponseText/validResponseHash: kept for the resulturl/poll
- * verification path (inbound Paynow status updates), NOT for init. */
+/* parseResponseText/validResponseHash: used to verify the remotetransaction
+ * response AND any inbound Paynow status-update / resulturl messages. */
 
 exports.parseResponseText = parseResponseText;
 exports.validResponseHash = validResponseHash;
 exports.signPayload = signPayload;
+exports.remoteTransaction = remoteTransaction;
 exports.normPhone = normPhone;
 
