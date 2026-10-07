@@ -594,16 +594,30 @@ function renderPay(){
 }
 /* Paynow amounts: strip the "$" for the gateway (e.g. "$0.50" -> "0.50"). */
 function payAmt(u){ return String(u || "").replace(/[^0-9.]/g, ""); }
-/* ---- Paynow (server-side init -> JSON browserurl) ----
-   Key + gateway POST live only in the Netlify function env. */
+/* ---- Paynow (sign-and-return -> browser form-POST to gateway) ----
+   Key lives only in the Netlify function env. Browser POSTs the signed
+   payload DIRECTLY to Paynow so its session cookies are set properly. */
 var PAYNOW_INIT_URL = "/.netlify/functions/paynow-init";
+var PAYNOW_GATEWAY = "https://www.paynow.co.zw/interface/initiatetransaction";
 var paynowBusy = false;
 function payRef(){
   var who = "";
   try { who = (wallet && wallet.deviceUser) ? String(wallet.deviceUser) : ""; } catch(e){}
   return ("ISH-" + (who ? who.replace(/\D/g,"").slice(-6) + "-" : "") + Date.now().toString(36).toUpperCase()).slice(0, 32);
 }
-/* Server-side init: the browser never touches the Paynow gateway directly. */
+/* Browser form-POSTs the signed payload DIRECTLY to Paynow so its
+   session cookies are set on the customer's browser (no server fetch). */
+function postToGateway(fields){
+  var f = document.createElement("form");
+  f.method = "POST"; f.action = PAYNOW_GATEWAY; f.style.display = "none";
+  Object.keys(fields).forEach(function(k){
+    if(fields[k] === undefined || fields[k] === null) return;
+    var i = document.createElement("input");
+    i.type = "hidden"; i.name = k; i.value = fields[k];
+    f.appendChild(i);
+  });
+  document.body.appendChild(f); f.submit();
+}
 function payWithPaynow(){
   if(paynowBusy || !pendingTopup) return;
   paynowBusy = true;
@@ -628,11 +642,20 @@ function payWithPaynow(){
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
-  }).then(function(r){ return r.json(); }).then(function(init){
-    if(!init || !init.browserurl){ throw new Error((init && init.error) || "Paynow unavailable"); }
+  }).then(function(r){ return r.json(); }).then(function(signed){
+    if(!signed || !signed.hash){ throw new Error((signed && signed.error) || "Paynow unavailable"); }
     /* Tokens are credited by the resulturl poll / return handler — not here. */
-    $paynowPending = { reference: reference, tokens: pendingTopup.tokens, pollurl: init.pollurl || null };
-    window.location.href = init.browserurl;
+    $paynowPending = { reference: signed.reference, tokens: pendingTopup.tokens };
+    /* Direct browser POST to Paynow: lets Paynow set its session cookies. */
+    var fields = {
+      id: signed.id, reference: signed.reference, amount: signed.amount,
+      additionalinfo: signed.additionalinfo, returnurl: signed.returnurl,
+      resulturl: signed.resulturl, status: signed.status, hash: signed.hash
+    };
+    if(signed.authemail) fields.authemail = signed.authemail;
+    if(signed.authphone) fields.authphone = signed.authphone;
+    if(signed.authname) fields.authname = signed.authname;
+    postToGateway(fields);
   }).catch(function(err){
     paynowBusy = false;
     if(btn){ btn.disabled = false; btn.textContent = old; }

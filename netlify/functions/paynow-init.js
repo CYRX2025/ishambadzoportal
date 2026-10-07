@@ -1,11 +1,18 @@
 // POST /.netlify/functions/paynow-init
+// SIGN-AND-RETURN ONLY — never POSTs to Paynow itself. The browser must
+// POST the signed payload straight to the gateway via an auto-submitting
+// form so Paynow can set its session cookies (server-side fetch breaks
+// this and causes "Please login using Guest Payment" errors).
 // Body (JSON): { reference, amount, additionalinfo, returnurl, resulturl,
-//                authemail?, authphone?, authname?, redirect? }
-// Phone-only checkout: when authemail is missing but authphone is given,
-// a placeholder "client_<digits>@placeholder.com" email is generated so
-// Paynow Express Checkout gets BOTH authemail + authphone.
-// Hash rule (per docs): EVERY sent field except "hash", concatenated in
-// field order, + key, SHA512, uppercase hex — so optional fields ARE hashed.
+//                authemail?, authphone?, authname? }
+// Phone-only checkout: missing/empty authemail + usable authphone ->
+// placeholder "client_<digits>@placeholder.com" is generated AND returned.
+// Returns JSON: { id, reference, amount, additionalinfo, returnurl,
+//   resulturl, status, authemail?, authphone?, authname?,
+//   authemailGenerated, hash, gateway }
+// The browser then builds a hidden form and submits it to gateway.
+// Hash rule (per docs): EVERY returned field except "hash", concatenated
+// in field order, + key, SHA512, uppercase hex.
 // Env: PAYNOW_INTEGRATION_ID, PAYNOW_INTEGRATION_KEY (required).
 // Docs: https://developers.paynow.co.zw/docs/paynow/initiate_transaction/
 //       https://developers.paynow.co.zw/docs/paynow/generating_hash/
@@ -131,40 +138,29 @@ exports.handler = async (event) => {
   const additionalinfo = String(body.additionalinfo || "ishambadzo token top-up").slice(0, 255);
   const returnurl = String(body.returnurl || FALLBACK_RETURN);
   const resulturl = String(body.resulturl || FALLBACK_RESULT);
-
-  const out = await initTransaction(
+  const signed = signPayload(
     { reference, amountStr, additionalinfo, returnurl, resulturl,
       authemail: body.authemail, authphone: body.authphone, authname: body.authname },
-    { id: ID, key: KEY, gateway: GATEWAY }
+    { id: ID, key: KEY }
   );
-  if (!out.ok) return json(out.http || 502, { error: out.error, responseText: out.responseText });
-
-  const wantRedirect =
-    (event.queryStringParameters && event.queryStringParameters.redirect === "1") ||
-    body.redirect === true || body.redirect === "1";
-  if (wantRedirect) return redirect(out.browserurl);
-
   return json(200, {
-    status: out.status, browserurl: out.browserurl, pollurl: out.pollurl,
-    paynowreference: out.paynowreference, hashValid: true,
-    reference, amount: amountStr,
-    authemail: out.authemail, authphone: out.authphone,
-    authemailGenerated: out.authemailGenerated,
+    id: ID, reference, amount: amountStr, additionalinfo, returnurl, resulturl,
+    status: "Message", hash: signed.hash, gateway: GATEWAY,
+    ...(signed.authemail ? { authemail: signed.authemail } : {}),
+    ...(signed.authphone ? { authphone: signed.authphone } : {}),
+    ...(signed.authname ? { authname: signed.authname } : {}),
+    authemailGenerated: signed.authemailGenerated,
   });
 };
 
-async function initTransaction(p, creds) {
-  // Phone-only checkout: missing/empty authemail + a usable phone ->
-  // generate "client_<digits>@placeholder.com" so Express Checkout gets BOTH.
+/* Pure sign-and-return: build the ordered field list (incl. the
+ * phone-fallback email), hash EVERY field except "hash" in order + key. */
+function signPayload(p, creds) {
   const phone = normPhone(p.authphone);
   let email = String(p.authemail || "").trim().slice(0, 128);
-  const emailGenerated = !email && !!phone;
-  if (emailGenerated) {
-    email = "client_" + phone + "@placeholder.com";
-  }
-  // Build ordered field list; request hash covers EVERY sent field except
-  // "hash" (concatenated in field order + key). Optional authemail/authphone/
-  // authname MUST be hashed when sent, else Paynow rejects with hash mismatch.
+  const authemailGenerated = !email && !!phone;
+  if (authemailGenerated) email = "client_" + phone + "@placeholder.com";
+  const authname = String(p.authname || "").trim().slice(0, 128);
   const fields = [
     ["id", String(creds.id)],
     ["reference", p.reference],
@@ -176,42 +172,21 @@ async function initTransaction(p, creds) {
   ];
   if (email) fields.push(["authemail", email]);
   if (phone) fields.push(["authphone", phone]);
-  if (p.authname) fields.push(["authname", String(p.authname).slice(0, 128)]);
-  const requestHash = crypto
+  if (authname) fields.push(["authname", authname]);
+  const hash = crypto
     .createHash("sha512")
     .update(fields.map((f) => f[1]).join("") + creds.key, "utf8")
     .digest("hex")
     .toUpperCase();
-  const form = new URLSearchParams();
-  fields.forEach((f) => form.set(f[0], f[1]));
-  form.set("hash", requestHash);
-
-  let responseText = "";
-  try {
-    const res = await fetch(creds.gateway, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: form.toString(),
-    });
-    responseText = await res.text();
-  } catch (e) {
-    return { ok: false, http: 502, error: "Could not reach Paynow: " + (e && e.message ? e.message : e) };
-  }
-  const parsed = parseResponseText(responseText);
-  if (parsed.status.toLowerCase() !== "ok" || !parsed.browserurl) {
-    return { ok: false, http: 502, error: parsed.error || "Paynow rejected the transaction", responseText };
-  }
-  if (!validResponseHash(parsed, creds.key)) {
-    return { ok: false, http: 502, error: "Paynow response hash mismatch. Transaction NOT started.", responseText };
-  }
-  return { ok: true, status: parsed.status, browserurl: parsed.browserurl,
-    pollurl: parsed.pollurl, paynowreference: parsed.paynowreference,
-    authemail: email || null, authphone: phone || null,
-    authemailGenerated: emailGenerated };
+  return { fields, hash, authemail: email || null, authphone: phone || null,
+    authname: authname || null, authemailGenerated };
 }
+
+/* parseResponseText/validResponseHash: kept for the resulturl/poll
+ * verification path (inbound Paynow status updates), NOT for init. */
 
 exports.parseResponseText = parseResponseText;
 exports.validResponseHash = validResponseHash;
-exports.initTransaction = initTransaction;
+exports.signPayload = signPayload;
 exports.normPhone = normPhone;
 
