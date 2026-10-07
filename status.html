@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  ishambadzo - MikroTik Hotspot Captive Portal - DASHBOARD / STATUS PAGE
+  Served AFTER authentication (STEP 3). Auto-refreshes every 30s so the
+  router re-injects fresh live values for the Data Remaining meter.
+
+  MikroTik vars used:
+    $(username) $(ip) $(mac) $(uptime)
+    $(bytes-in-nice) $(bytes-out-nice) $(session-time-left)
+    $(link-logout) $(link-orig) $(link-status)
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="30;">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#170A26">
+<title>ishambadzo - Dashboard</title>
+<style>
+  :root{
+    --bg:#170A26; --bg2:#221038; --card:#2A1547; --card2:#351C5C;
+    --ink:#eaf2ff; --muted:#9fb3d8; --line:rgba(255,255,255,.10);
+    --brand:#C724FF; --brand2:#7B1FFF; --gold:#ffc94d; --red:#ff5c7a;
+    --accent:#FF4D6D; --shadow:0 14px 40px rgba(20,8,32,.45);
+    --r:18px; --r-sm:12px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);
+    background:radial-gradient(1200px 600px at 85% -10%,rgba(199,36,255,.16),transparent 60%),
+      radial-gradient(900px 500px at -10% 20%,rgba(255,77,109,.16),transparent 55%),
+      linear-gradient(160deg,var(--bg),var(--bg2));min-height:100vh;line-height:1.5}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px 16px 60px}
+
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 4px 18px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.3px}
+  .brand .logo{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:linear-gradient(135deg,var(--brand),var(--brand2));color:var(--bg);font-size:18px;font-weight:900}
+  .brand small{display:block;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.4px}
+  .badge{font-size:10.5px;font-weight:800;padding:6px 12px;border-radius:999px;text-transform:uppercase;letter-spacing:.4px;color:var(--bg);background:var(--bg)}
+  .badge.up{--bg:linear-gradient(135deg,var(--brand),var(--brand2))}
+  .badge.prev{--bg:linear-gradient(135deg,var(--gold),#e0a62e)}
+
+  .panel{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:var(--r);padding:18px;margin:14px 0;box-shadow:var(--shadow)}
+  .panel .head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+  .panel h2{display:flex;align-items:center;gap:10px;margin:0;font-size:16px;font-weight:800;letter-spacing:.2px}
+  .panel h2 .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:15px;color:var(--bg);background:linear-gradient(135deg,var(--brand),var(--brand2))}
+  .sub{color:var(--muted);font-size:12.5px;margin:0}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+  .tgrid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
+  .bcards{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+
+  /* ---- Hero / Online panel ---- */
+  .hero{background:linear-gradient(135deg,rgba(199,36,255,.14),rgba(255,77,109,.10));border:1px solid rgba(199,36,255,.4);border-radius:var(--r);padding:18px;margin:8px 0;box-shadow:var(--shadow)}
+  .hero .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .hero .who{display:flex;align-items:center;gap:12px}
+  .avatar{width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));color:var(--bg);display:grid;place-items:center;font-weight:900;font-size:18px}
+  .hero h1{margin:0;font-size:20px;font-weight:800}
+  .hero .mini{font-size:12px;color:var(--muted)}
+  .meter{--p:0%;height:14px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;position:relative;margin:16px 0 6px}
+  .meter i{position:absolute;left:0;top:0;bottom:0;width:var(--p);background:linear-gradient(90deg,var(--brand),var(--accent));border-radius:999px;transition:width .6s ease}
+  .meter-label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+  .meter-label b{color:var(--ink)}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:14px}
+  .stat{background:rgba(30,15,50,.5);border:1px solid var(--line);border-radius:11px;padding:10px}
+  .stat .k{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  .stat .v{font-size:15px;font-weight:800;margin-top:2px;word-break:break-word}
+
+  .card{position:relative;border:1px solid var(--line);border-radius:var(--r-sm);background:rgba(30,15,50,.5);padding:14px;display:flex;flex-direction:column;gap:8px;transition:.2s}
+  .card .tag{font-size:11px;letter-spacing:.4px;color:var(--gold);font-weight:700;text-transform:uppercase}
+  .card h3{margin:0;font-size:18px;font-weight:800}
+  .card p{margin:0;font-size:12px;color:var(--muted)}
+  .card .price{display:flex;align-items:baseline;gap:8px;margin-top:auto}
+  .card .price .t{font-size:20px;font-weight:900}
+  .card .price .u{font-size:11px;color:var(--muted)}
+  .card .buy{width:100%;margin-top:4px;padding:11px}
+  .card.selected{border:1px solid rgba(199,36,255,.5)}
+  .card.on{background:linear-gradient(135deg,var(--card2),#2A1547);border:1px solid rgba(199,36,255,.55)}
+  .conn{border:1px solid rgba(199,36,255,.4);border-radius:11px;padding:8px;display:flex;align-items:center;gap:8px;background:rgba(199,36,255,.08);margin-top:2px}
+  .conn .ok{width:20px;height:20px;border-radius:50%;background:var(--brand);color:var(--bg);display:grid;place-items:center;font-size:12px;font-weight:900;flex:none}
+
+  .btn{--bg:linear-gradient(135deg,var(--brand),var(--brand2));display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:14px 20px;font-size:15px;font-weight:800;letter-spacing:.2px;cursor:pointer;color:#fff;background:var(--bg);transition:transform .18s,box-shadow .18s,filter .18s;box-shadow:0 10px 24px rgba(199,36,255,.35),inset 0 1px 0 rgba(255,255,255,.35);text-shadow:0 1px 2px rgba(0,0,0,.25)}
+  .btn:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 14px 30px rgba(199,36,255,.45),inset 0 1px 0 rgba(255,255,255,.35)} .btn:active{transform:translateY(0) scale(.98);filter:brightness(.97)}
+  .btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(199,36,255,.45),0 10px 24px rgba(199,36,255,.35)}
+  .btn:disabled{opacity:.4;cursor:not-allowed;box-shadow:none;transform:none}
+  .btn.ghost{background:rgba(255,255,255,.06);color:var(--ink);border:1px solid rgba(255,255,255,.18);box-shadow:none;text-shadow:none}
+  .btn.ghost:hover{background:rgba(255,255,255,.12);box-shadow:0 8px 20px rgba(0,0,0,.35)}
+  .btn.logout{background:linear-gradient(135deg,var(--red),#d64063);color:#fff;box-shadow:0 10px 24px rgba(255,92,122,.22)}
+
+  .modal{position:fixed;inset:0;display:none;align-items:flex-end;background:rgba(20,8,32,.7);z-index:50}
+  .modal.show{display:flex}
+  .sheet{width:100%;max-width:480px;margin:0 auto;background:linear-gradient(180deg,var(--card),var(--card2));border-radius:22px 22px 0 0;padding:20px 20px 26px}
+  .sheet h3{margin:0 0 4px;font-size:17px}
+  .pm{display:flex;gap:10px;margin:14px 0}
+  .pm button{flex:1;border:1px solid var(--line);background:rgba(30,15,50,.5);color:var(--ink);border-radius:999px;padding:12px 16px;font-weight:700;cursor:pointer;font-size:13px;transition:.18s}
+  .pm button:hover{background:rgba(255,255,255,.08)}
+  .pm button.on{border-color:var(--brand);color:var(--brand);background:rgba(199,36,255,.08)}
+  .grab{width:44px;height:5px;border-radius:999px;background:rgba(255,255,255,.25);margin:0 auto 14px}
+
+  /* ---------- Shop tabs: Mbasera / Internet Yedu ---------- */
+  .shop-tabs{display:flex;gap:8px;margin:14px 0 0;padding:4px;border:1px solid var(--line);border-radius:999px;background:rgba(30,15,50,.5)}
+  .shop-tabs button{flex:1;border:none;border-radius:999px;padding:11px 8px;font-size:13.5px;font-weight:800;cursor:pointer;color:var(--muted);background:transparent;transition:.18s}
+  .shop-tabs button.on{color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 8px 20px rgba(199,36,255,.35)}
+  .shop-pane{display:none} .shop-pane.on{display:block}
+
+  #rt{display:none}
+  footer{margin-top:22px;text-align:center;color:var(--muted);font-size:11px;line-height:1.7}
+  footer b{color:var(--ink)}
+  @media(max-width:480px){ .grid{grid-template-columns:1fr 1fr} .bcards{grid-template-columns:1fr} }
+</style>
+<style id="isham-glx">
+:root{
+  --bg:#05050a; --bg2:#07070d; --card:rgba(255,255,255,.035); --card2:rgba(255,255,255,.012);
+  --ink:#f8fafc; --muted:#94a3b8; --line:rgba(255,255,255,.08);
+  --brand:#C724FF; --brand2:#7B1FFF; --accent:#FF4D6D; --gold:#f4b83e; --red:#ff5d7a;
+  --shadow:0 18px 52px rgba(0,0,0,.46); --r:20px; --r-sm:13px;
+}
+body{
+  background-color:#05050a;
+  background:
+    radial-gradient(900px 620px at 20% 4%,rgba(199,36,255,.16),transparent 62%),
+    radial-gradient(820px 560px at 92% 12%,rgba(255,77,109,.18),transparent 60%),
+    radial-gradient(1000px 640px at 74% 96%,rgba(255,77,109,.10),transparent 64%),
+    linear-gradient(180deg,#05050a 0%,#07070d 55%,#04040a 100%);
+}
+.panel,.card,.hero,.sheet,.stat,.field input,.wifi-chip,.avatar,.badge{backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.panel{position:relative;border-radius:26px;box-shadow:var(--shadow),0 1px 0 rgba(255,255,255,.08) inset}
+.panel::before{content:"";position:absolute;width:88px;height:88px;right:16px;top:-10px;border-radius:50%;filter:blur(14px);background:radial-gradient(circle,rgba(199,36,255,.30),transparent 70%);opacity:.65;pointer-events:none}
+.hero{border-radius:26px;box-shadow:0 0 26px rgba(199,36,255,.16),0 20px 44px rgba(0,0,0,.44)}
+.hero .mini{color:var(--muted)}
+.card{border-radius:18px;transition:transform .32s cubic-bezier(.22,.7,.3,1.05),border-color .3s,box-shadow .32s}
+.card:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.14)}
+.card.selected{border-color:rgba(199,36,255,.45);box-shadow:0 0 0 1px rgba(199,36,255,.2),0 16px 38px rgba(0,0,0,.4)}
+.card.on{box-shadow:0 0 24px rgba(199,36,255,.16),0 18px 42px rgba(0,0,0,.42)}
+.btn{position:relative;overflow:hidden;border-radius:999px}
+.btn:hover{filter:brightness(1.08)}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.32;filter:grayscale(.5)}
+.btn.buy.go{--bg:linear-gradient(135deg,#E08CFF,#7B1FFF);animation:connGlow 1.5s ease-in-out infinite}
+.btn.logout{border-radius:999px}
+.rp{position:absolute;border-radius:50%;background:rgba(255,255,255,.5);transform:scale(0);pointer-events:none;animation:rpulse .65s ease-out}
+@keyframes rpulse{0%{transform:scale(0);opacity:1}100%{transform:scale(1.1);opacity:0}}
+@keyframes connGlow{0%,100%{box-shadow:0 0 0 1px rgba(199,36,255,.55),0 0 16px rgba(199,36,255,.35)}50%{box-shadow:0 0 0 1px rgba(199,36,255,.95),0 0 30px rgba(199,36,255,.6)}}
+.badge{color:var(--muted);background:rgba(255,255,255,.04);font-weight:700}
+.badge.up{background:linear-gradient(135deg,rgba(199,36,255,.14),rgba(199,36,255,.04));color:#E08CFF;border-color:rgba(199,36,255,.35);text-shadow:0 0 12px rgba(199,36,255,.45);animation:shimmer 2.8s ease-in-out infinite}
+.badge.prev{background:linear-gradient(135deg,rgba(244,184,62,.12),rgba(244,184,62,.04));color:#f4b83e;border-color:rgba(244,184,62,.32)}
+@keyframes shimmer{0%,100%{opacity:1}50%{opacity:.5}}
+#walletBalance{animation:pulseGlow 2.6s ease-in-out infinite}
+@keyframes pulseGlow{0%,100%{text-shadow:0 0 8px rgba(199,36,255,.35)}50%{text-shadow:0 0 20px rgba(199,36,255,.65)}}
+.stat .v{color:var(--ink);font-weight:800}
+.meter{box-shadow:inset 0 1px 0 rgba(255,255,255,.14)}
+.meter i{box-shadow:0 0 10px rgba(199,36,255,.4)}
+.conn{box-shadow:0 0 16px rgba(199,36,255,.18)}
+.conn .ok{box-shadow:0 0 10px rgba(199,36,255,.5)}
+.pm button{border-radius:999px}
+.pm button.on{border-color:rgba(199,36,255,.5);background:linear-gradient(135deg,rgba(199,36,255,.14),rgba(199,36,255,.03));color:#E08CFF;box-shadow:0 0 0 1px rgba(199,36,255,.25)}
+.pm button::before{content:"\2022";margin-right:6px;font-size:.6em}
+.modal{background:rgba(4,5,10,.7);backdrop-filter:blur(10px)}
+.sheet{border:1px solid var(--line);backdrop-filter:blur(18px);border-radius:26px 26px 0 0}
+.live-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#C724FF;box-shadow:0 0 10px #C724FF;animation:breathe 1.8s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.72)}}
+@media(max-width:480px){.panel{border-radius:22px}.card{border-radius:15px}.hero{border-radius:22px}}
+</style>
+<style id="isham-ic">
+.ic{width:1.15em;height:1.15em;display:inline-block;vertical-align:-0.18em;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.panel h2 .ico svg{width:17px;height:17px;stroke:#06200f;stroke-width:2;flex:none}
+.conn .ok svg{width:15px;height:15px;stroke:#06200f;stroke-width:2.2;flex:none}
+.pm button::before{content:none}.pm button svg{width:1em;height:1em;vertical-align:-0.12em}
+.btn svg,a.btn svg{flex:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="brand">
+      <div>ishambadzo<small>Dashboard</small></div>
+    </div>
+    <span class="badge up"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><line x1="7.5" y1="13" x2="7.5" y2="19"/><line x1="10.5" y1="10.5" x2="10.5" y2="19"/><line x1="13.5" y1="8" x2="13.5" y2="19"/><line x1="16.5" y1="5.5" x2="16.5" y2="19"/></svg> Online</span>
+  </div>
+
+  <!-- Hidden router-fed live values -->
+  <div id="rt">
+    <span data-rt="username">$(username)</span>
+    <span data-rt="ip">$(ip)</span>
+    <span data-rt="mac">$(mac)</span>
+    <span data-rt="uptime">$(uptime)</span>
+    <span data-rt="in">$(bytes-in-nice)</span>
+    <span data-rt="out">$(bytes-out-nice)</span>
+    <span data-rt="tleft">$(session-time-left)</span>
+    <span data-rt="dst">$(link-orig)</span>
+    <span data-rt="logout">$(link-logout)</span>
+  </div>
+
+  <!-- Hero: welcome + active package + live Data Remaining meter -->
+  <section class="hero">
+    <div class="top">
+      <div class="who">
+        <div class="avatar" id="av">i</div>
+        <div>
+          <h1>Welcome back, <span id="rtName">Guest</span></h1>
+          <div class="mini" id="rtIp">--</div>
+        </div>
+      </div>
+      <a class="btn logout" id="logoutBtn" style="width:auto;padding:10px 14px;font-size:13px"
+         href="$(link-logout)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><line x1="12" y1="5" x2="12" y2="12.5"/><path d="M10 19 Q12 20.5 14 19"/></svg> Logout</a>
+    </div>
+    <div id="activeMeter">
+      <div class="mini" style="margin-top:14px">Active package</div>
+      <div class="who" style="margin-top:6px">
+        <h3 style="margin:0" id="rtBundle">No active bundle</h3>
+        <span class="badge up" style="margin-left:auto">Data Remaining</span>
+      </div>
+      <div class="meter"><i></i></div>
+      <div class="meter-label"><span>Used: <b id="mUsed">0 B</b> / <b id="mQuota">--</b></span><span>Left: <b id="mLeft">--</b></span></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k">Session uptime</div><div class="v" id="rtUptime">--</div></div>
+      <div class="stat"><div class="k">Downloaded</div><div class="v" id="rtIn">0 B</div></div>
+      <div class="stat"><div class="k">Uploaded</div><div class="v" id="rtOut">0 B</div></div>
+      <div class="stat"><div class="k">Time left</div><div class="v" id="rtLeft">--</div></div>
+    </div>
+    <a class="btn ghost" id="statusLink" href="$(link-status)" style="margin-top:14px"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 5 A 7 7 0 0 1 5 19 M5 19 L3 16.5"/></svg> Refresh live data</a>
+  </section>
+
+  <!-- Shop tabs: Internet Yedu / Mbasera -->
+  <div class="shop-tabs" role="tablist" aria-label="Shop">
+    <button type="button" id="tabBundles" class="on" onclick="switchShop('bundles')">Internet Yedu</button>
+    <button type="button" id="tabWallet" onclick="switchShop('wallet')">Mbasera</button>
+  </div>
+
+  <!-- Internet Yedu -->
+  <section class="panel shop-pane on" id="paneBundles">
+    <div class="head">
+      <h2><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="15" rx="1.5"/><rect x="10" y="9" width="9.5" height="10" rx="1.5"/></svg></span> Internet Yedu</h2>
+    </div>
+    <p class="sub">Buy another bundle with Mbasera tokens and Connect to switch your active package.</p>
+    <div class="grid bcards" id="bundleGrid"></div>
+  </section>
+
+  <!-- Mbasera wallet -->
+  <section class="panel shop-pane" id="paneWallet">
+    <div class="head">
+      <h2><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="16.5" r="6.5"/><circle cx="12" cy="7.5" r="6.5"/></svg></span> Mbasera</h2>
+      <span class="badge prev" style="display:inline-flex;align-items:center;gap:7px">1 Token = $0.10<span class="live-dot"></span></span>
+    </div>
+    <div class="stats" style="grid-template-columns:1fr 1fr">
+      <div class="stat"><div class="k">Current balance</div><div class="v" id="walletBalance">--</div></div>
+      <div class="stat"><div class="k">Value</div><div class="v" id="walletValue">--</div></div>
+    </div>
+    <p class="sub" style="margin:14px 0 10px">Top up securely with Paynow to keep browsing when your data runs out.</p>
+    <div class="grid tgrid" id="topupGrid"></div>
+  </section>
+
+  <footer>
+    <b>ishambadzo</b> &middot; Secure Hotspot Dashboard<br>
+    Paynow integrated &middot; Powered by collaboana
+  </footer>
+
+  <!-- Top-up payment modal (Paynow) -->
+  <div class="modal" id="payModal">
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>Top up tokens</h3>
+      <p class="sub">Pay <b id="payUsd" style="color:var(--brand)">$0.00</b> to add <b id="payTokens" style="color:var(--ink)">0</b> tokens</p>
+      <div class="pm paynow-only">
+        <button class="on" id="pmPaynow" type="button"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="7" y1="15" x2="11" y2="15"/></svg> Paynow</button>
+      </div>
+      <div id="payInstruction" class="sub" style="margin:6px 0 12px"></div>
+      <button class="btn" id="payConfirm" type="button">Confirm payment &amp; add tokens</button>
+      <button class="btn ghost" id="payCancel" type="button" style="margin-top:8px">Cancel</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+/* ishambadzo dashboard JS - live MikroTik meter + wallet + bundles */
+var TOKEN_USD = 0.10;
+var WALLET_KEY = "ishambadzo_wallet";
+var SESSION_KEY = "ishambadzo_session";
+/* Hard-coded Internet Yedu packages — fixed data amount, fixed validity, fixed price.
+   hours = validity window; boughtAt/expiresAt are stamped per purchase. */
+var BUNDLES = [
+  {id:"b1", name:"Yedu Daily",    size:"1 GB",    mb:1024,  validity:"24 Hours", hours:24,        tokens:5,   usd:"$0.50"},
+  {id:"b2", name:"Yedu 3-Day",    size:"2.5 GB",  mb:2560,  validity:"3 Days",   hours:72,        tokens:10,  usd:"$1.00"},
+  {id:"b3", name:"Yedu 5-Day",    size:"6 GB",    mb:6144,  validity:"5 Days",   hours:120,       tokens:20,  usd:"$2.00"},
+  {id:"b4", name:"Yedu Monthly",  size:"14 GB",   mb:14336, validity:"30 Days",  hours:720,       tokens:50,  usd:"$5.00"},
+  {id:"b5", name:"Yedu Monthly+", size:"35 GB",   mb:35840, validity:"30 Days",  hours:720,       tokens:120, usd:"$12.00"},
+  {id:"b6", name:"Yedu Max",      size:"60 GB",   mb:61440, validity:"30 Days",  hours:720,       tokens:200, usd:"$20.00"}
+];
+Object.freeze(BUNDLES); BUNDLES.forEach(Object.freeze);
+
+/* ---- Purchase / expiry helpers (shared logic) ---- */
+function fmtExpiry(ts){
+  if(!ts) return "--";
+  var d = new Date(ts);
+  var date = d.getDate()+"/"+(d.getMonth()+1)+"/"+d.getFullYear();
+  var h = d.getHours(), m = d.getMinutes(), ap = h>=12 ? "PM" : "AM";
+  h = h%12; if(h===0) h = 12;
+  return date+" "+h+":"+("0"+m).slice(-2)+" "+ap;
+}
+function isExpired(){
+  return !!(wallet.expiresAt && Date.now() > wallet.expiresAt);
+}
+function activePack(){
+  if(!wallet.activeBundleId) return null;
+  var b = byId(wallet.activeBundleId);
+  if(!b) return null;
+  return { def:b, boughtAt:wallet.boughtAt||null, expiresAt:wallet.expiresAt||null,
+           expired:isExpired() };
+}
+/* Buying stamps boughtAt + expiresAt; buying a new pack replaces the old one. */
+function stampPurchase(id){
+  var b = byId(id);
+  if(!b) return false;
+  wallet.activeBundleId = id;
+  wallet.boughtAt = Date.now();
+  wallet.expiresAt = wallet.boughtAt + b.hours*3600*1000;
+  wallet.connected = false;               /* awaiting Connect */
+  wallet.allowedMac = "";                 /* re-captured on Connect */
+  saveWallet(wallet);
+  return true;
+}
+/* Expired packs keep their id so the card can show "Expired — buy again".
+   Only the live session is dropped. Buying a new pack replaces the old one. */
+function purgeExpired(){
+  if(isExpired()){
+    wallet.connected = false;
+    if(wallet.allowedMac){ revokeMac(wallet.allowedMac); wallet.allowedMac = ""; }
+    saveWallet(wallet);
+  }
+  /* sweep expired global MAC grants so stale devices lose access */
+  try {
+    var a = getMacAllow(), changed = false, now = Date.now();
+    for(var m in a){
+      if(a.hasOwnProperty(m) && a[m] && a[m].expiresAt && now > a[m].expiresAt){ delete a[m]; changed = true; }
+    }
+    if(changed) putMacAllow(a);
+  } catch(e){}
+}
+/* Hard-code this device's MAC for network access: only a purchased, unexpired
+   bundle may allow it. The MAC is captured from the router ($(mac)); in preview
+   (no router) the access flag is still recorded. */
+function grantMacAccess(){
+  var key = "";
+  try { key = String((wallet && wallet.deviceUser) || getActiveKey() || "").replace(/\D/g, ""); } catch(e){}
+  var mac = rtMac();
+  wallet.allowedMac = mac || "PREVIEW-DEVICE";
+  wallet.macAllowedAt = Date.now();
+  saveWallet(wallet);
+  if(mac) allowMac(mac, key, wallet.expiresAt || null);
+  return wallet.allowedMac;
+}
+var TOPUPS = [
+  {tokens:3,   usd:"$0.30"}, {tokens:10, usd:"$1.00"}, {tokens:25, usd:"$2.50"},
+  {tokens:50,  usd:"$5.00"}, {tokens:120,usd:"$12.00"},{tokens:200,usd:"$20.00"}
+];
+function blankWallet(){
+  return { tokens:0, activeBundleId:null, connected:false, deviceUser:"", deviceName:"", devicePass:"",
+           boughtAt:null, expiresAt:null };
+}
+function getStore(){
+  var s = null;
+  try { var raw = localStorage.getItem(WALLET_KEY); if(raw) s = JSON.parse(raw); } catch(e){}
+  if(s && s.users) return s;
+  s = { users:{} };
+  try {
+    var raw2 = localStorage.getItem(WALLET_KEY);
+    if(raw2){
+      var w0 = JSON.parse(raw2);
+      if(w0 && typeof w0.tokens !== "undefined" && !w0.users){
+        var k0 = "";
+        try { k0 = String(w0.deviceUser || "").replace(/\D/g, ""); } catch(e2){}
+        if(k0){ s.users[k0] = w0; try { localStorage.setItem(SESSION_KEY, k0); } catch(e3){} }
+      }
+    }
+  } catch(e){}
+  return s;
+}
+function putStore(s){ try { localStorage.setItem(WALLET_KEY, JSON.stringify(s)); } catch(e){} }
+function getActiveKey(){ try { return localStorage.getItem(SESSION_KEY) || ""; } catch(e){ return ""; } }
+function setActiveKey(k){ try { localStorage.setItem(SESSION_KEY, k); } catch(e){} }
+function clearActiveKey(){ try { localStorage.removeItem(SESSION_KEY); } catch(e){} }
+
+/* ---- Hard-coded device MAC allowlist ----
+   On Connect, the device MAC (injected by the router as $(mac)) is captured and
+   hard-coded into the user's wallet as allowedMac. Network access for that MAC is
+   then tied to the wallet: connected=true + unexpired bundle = allowed. Logout
+   (or expiry) revokes it. Preview (no router) falls back to allowing Connect. */
+var MAC_ALLOW_KEY = "ishambadzo_mac_allow";
+function normMac(m){
+  if(!m) return "";
+  var h = String(m).toUpperCase().replace(/[^0-9A-F]/g, "");
+  if(h.length !== 12) return "";
+  return h.match(/.{2}/g).join(":");
+}
+function rtMac(){
+  try {
+    var el = document.querySelector('#rt [data-rt="mac"]');
+    if(!el) return "";
+    var t = (el.textContent || "").trim();
+    if(!t || t.indexOf("$(") !== -1) return "";   /* router placeholder in preview */
+    return normMac(t);
+  } catch(e){ return ""; }
+}
+function getMacAllow(){
+  try { var raw = localStorage.getItem(MAC_ALLOW_KEY); if(raw) return JSON.parse(raw); } catch(e){}
+  return {};
+}
+function putMacAllow(a){ try { localStorage.setItem(MAC_ALLOW_KEY, JSON.stringify(a)); } catch(e){} }
+function allowMac(mac, key, expiresAt){
+  mac = normMac(mac); if(!mac || !key) return false;
+  var a = getMacAllow();
+  a[mac] = { user:key, expiresAt:expiresAt||null, allowedAt:Date.now() };
+  putMacAllow(a);
+  return true;
+}
+function revokeMac(mac){
+  mac = normMac(mac); if(!mac) return;
+  var a = getMacAllow();
+  if(a[mac]){ delete a[mac]; putMacAllow(a); }
+}
+function revokeUserMacs(key){
+  if(!key) return;
+  var a = getMacAllow(), changed = false;
+  for(var m in a){ if(a.hasOwnProperty(m) && a[m] && a[m].user === key){ delete a[m]; changed = true; } }
+  if(changed) putMacAllow(a);
+}
+/* Is this device's MAC currently allowed on the network? Preview without a router
+   MAC returns true so Connect still works in local dev. */
+function macAllowed(key){
+  var mac = rtMac();
+  if(!mac) return true;
+  var a = getMacAllow();
+  var rec = a[mac];
+  if(!rec) return false;
+  if(key && rec.user !== key) return false;
+  if(rec.expiresAt && Date.now() > rec.expiresAt) return false;
+  return true;
+}
+/* Drops the live session when this device's MAC is not allowed (revoked, expired,
+   or granted to another user). Preview without a router MAC is unaffected. */
+function enforceMacGate(){
+  try {
+    if(!wallet.connected) return;
+    if(!rtMac()) return;   /* no router MAC in preview: nothing to enforce */
+    var key = "";
+    try { key = String((wallet && wallet.deviceUser) || getActiveKey() || "").replace(/\D/g, ""); } catch(e){}
+    if(!macAllowed(key)){
+      wallet.connected = false;
+      saveWallet(wallet);
+      renderBundles();
+    }
+  } catch(e){}
+}
+/* Loads the ACTIVE (signed-in) user's wallet only — never another user's. */
+function loadWallet(){
+  var w = null;
+  try {
+    var store = getStore();
+    var key = getActiveKey();
+    if(key && store.users && store.users[key]) w = store.users[key];
+  } catch(e){}
+  if(!w) w = blankWallet();
+  if(typeof w.boughtAt === "undefined") w.boughtAt = null;    /* purchase timestamp */
+  if(typeof w.expiresAt === "undefined") w.expiresAt = null;  /* fixed expiry timestamp */
+  return w;
+}
+/* Saves the ACTIVE user's wallet under their own key only. */
+function saveWallet(w){
+  var store = getStore();
+  var key = "";
+  try { key = String((w && w.deviceUser) || getActiveKey() || "").replace(/\D/g, ""); } catch(e){}
+  if(!key) return;
+  if(!store.users) store.users = {};
+  store.users[key] = w;
+  putStore(store);
+}
+function usdOf(t){ return "$" + (t*TOKEN_USD).toFixed(2); }
+function byId(b){ for(var i=0;i<BUNDLES.length;i++){ if(BUNDLES[i].id===b) return BUNDLES[i]; } return null; }
+function $(id){ return document.getElementById(id); }
+
+/* ---- MikroTik value parsers ---- */
+function rt(name){
+  var el = document.querySelector('#rt [data-rt="'+name+'"]');
+  return el ? el.textContent.trim() : "";
+}
+function parseBytes(s){
+  if(!s) return 0;
+  var m = String(s).trim().match(/([\d.]+)\s*(B|KIB|MIB|GIB|TIB)?/i);
+  if(!m || !m[1]) return 0;
+  var v = parseFloat(m[1]);
+  var u = (m[2]||"B").toUpperCase();
+  var mult = {B:1,"KIB":1024,"MIB":1048576,"GIB":1073741824,"TIB":1099511627776}[u] || 1;
+  return v * mult;
+}
+function niceBytes(n){
+  if(!isFinite(n)||n<0) return "0 B";
+  var u=["B","KiB","MiB","GiB","TiB"], i=0;
+  while(n>=1024 && i<u.length-1){ n/=1024; i++; }
+  return (i===0?n:n.toFixed(1)) + " " + u[i];
+}
+function parseDur(s){
+  var tot=0,m;
+  if(!s) return 0;
+  m=String(s).match(/(\d+)d/);  if(m) tot+=+m[1]*86400;
+  m=String(s).match(/(\d+)h/);  if(m) tot+=+m[1]*3600;
+  m=String(s).match(/(\d+)m/);  if(m) tot+=+m[1]*60;
+  m=String(s).match(/(\d+)s/);  if(m) tot+=+m[1];
+  if(!tot){ var p=String(s).split(":"); if(p.length===3) tot=+p[0]*3600+ +p[1]*60+ +p[2]; }
+  return tot;
+}
+function fmtDur(sec){
+  sec=Math.max(0,Math.floor(sec));
+  var d=Math.floor(sec/86400), h=Math.floor(sec%86400/3600),
+      m=Math.floor(sec%3600/60), s=sec%60;
+  if(d>0) return d+"d "+h+"h "+(m<10?"0":"")+m+"m";
+  if(h>0) return h+"h "+m+"m";
+  return m+"m "+(s<10?"0":"")+s+"s";
+}
+function sizeBytes(size){
+  var a=String(size).split(/\s+/);
+  var v=parseFloat(a[0]), u=(a[1]||"").replace("iB","B").toUpperCase();
+  var mult={GB:1073741824,"GIB":1073741824,MB:1048576,"MIB":1048576,TB:1099511627776,"TIB":1099511627776}[u]||1;
+  return v*mult;
+}
+function updateWalletUI(){
+  $("walletBalance").textContent = wallet.tokens + " tokens";
+  $("walletValue").textContent = usdOf(wallet.tokens);
+}
+
+/* ---- Top-up + Paynow payment modal ---- */
+var pendingTopup = null;
+function renderTopups(){
+  $("topupGrid").innerHTML = TOPUPS.map(function(t){
+    return '<div class="card"><span class="tag">Top up</span><h3>'+t.tokens+'</h3><p>tokens</p>'+
+      '<div class="price"><span class="t">'+t.usd+'</span></div>'+
+      '<button class="btn buy" data-tokens="'+t.tokens+'" data-usd="'+t.usd+'" type="button">Add</button></div>';
+  }).join("");
+  var g=$("topupGrid").querySelectorAll(".buy");
+  for(var i=0;i<g.length;i++){ g[i].onclick=openPay; }
+}
+function openPay(){
+  pendingTopup={tokens:+this.dataset.tokens,usd:this.dataset.usd};
+  renderPay(); $("payModal").classList.add("show");
+}
+function renderPay(){
+  $("payUsd").textContent=pendingTopup.usd;
+  $("payTokens").textContent=pendingTopup.tokens;
+  $("pmPaynow").classList.add("on");
+  $("payInstruction").innerHTML='Pay <b>'+pendingTopup.usd+'</b> securely with Paynow. You will be redirected to Paynow to complete payment, then credited automatically.';
+  $("payConfirm").textContent="Pay with Paynow";
+}
+/* Paynow amounts: strip the "$" for the gateway (e.g. "$0.50" -> "0.50"). */
+function payAmt(u){ return String(u||"").replace(/[^0-9.]/g,""); }
+/* Paynow: server-signed hash -> redirect to gateway. Key stays in the Netlify function env. */
+var PAYNOW_GATEWAY="https://www.paynow.co.zw/interface/initiatetransaction";
+var PAYNOW_HASH_URL="/.netlify/functions/paynow-hash";
+var paynowBusy=false;
+function payRef(){
+  var who=""; try{ who=(wallet&&wallet.deviceUser)?String(wallet.deviceUser):""; }catch(e){}
+  return ("ISH-"+(who?who.replace(/\D/g,"").slice(-6)+"-":"")+Date.now().toString(36).toUpperCase()).slice(0,32);
+}
+function postToGateway(f){
+  var fm=document.createElement("form");
+  fm.method="POST"; fm.action=PAYNOW_GATEWAY; fm.style.display="none";
+  Object.keys(f).forEach(function(k){ var i=document.createElement("input"); i.type="hidden"; i.name=k; i.value=f[k]; fm.appendChild(i); });
+  document.body.appendChild(fm); fm.submit();
+}
+function payWithPaynow(){
+  if(paynowBusy||!pendingTopup) return;
+  paynowBusy=true;
+  var btn=$("payConfirm"), old=btn?btn.textContent:"";
+  if(btn){ btn.disabled=true; btn.textContent="Contacting Paynow…"; }
+  var reference=payRef();
+  try{
+    var pend=JSON.parse(localStorage.getItem("ishambadzo_pending_pay")||"{}");
+    pend[reference]={tokens:pendingTopup.tokens,usd:pendingTopup.usd,at:Date.now()};
+    localStorage.setItem("ishambadzo_pending_pay",JSON.stringify(pend));
+  }catch(e){}
+  var here=String(window.location.href).split("#")[0];
+  var payload={reference:reference,amount:payAmt(pendingTopup.usd)||"0.00",
+    additionalinfo:pendingTopup.tokens+" ishambadzo tokens",
+    returnurl:here+(here.indexOf("?")===-1?"?":"&")+"paynow_ref="+encodeURIComponent(reference),
+    resulturl:here+(here.indexOf("?")===-1?"?":"&")+"paynow_result=1"};
+  fetch(PAYNOW_HASH_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
+  .then(function(r){ return r.json(); }).then(function(signed){
+    if(!signed||!signed.hash){ throw new Error((signed&&signed.error)||"Paynow unavailable"); }
+    postToGateway({id:signed.id,reference:signed.reference,amount:signed.amount,
+      additionalinfo:signed.additionalinfo,returnurl:signed.returnurl,
+      resulturl:signed.resulturl,status:signed.status,hash:signed.hash});
+  }).catch(function(err){
+    paynowBusy=false;
+    if(btn){ btn.disabled=false; btn.textContent=old; }
+    alert("Paynow: "+err.message+". Please try again.");
+  });
+}
+/* Shop tabs: Mbasera vs Internet Yedu */
+function switchShop(which){
+  var w = which === "bundles" ? false : true;
+  $("tabWallet").classList.toggle("on", w);
+  $("tabBundles").classList.toggle("on", !w);
+  $("paneWallet").classList.toggle("on", w);
+  $("paneBundles").classList.toggle("on", !w);
+}
+function confirmPay(){
+  if(pendingTopup){ payWithPaynow(); }
+}
+
+function cardHtml(b, state){
+  var priceRow = '<div class="price"><span class="t">'+b.tokens+'</span><span class="u">tokens &middot; '+b.usd+'</span></div>';
+  if(state==="on"){
+    return '<div class="card on"><div class="conn"><div class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 4 L9.5 6.5 L12 10.5 L20.5 18.5"/></svg></div><div><b>Online</b><br><span class="mini">active now &middot; see meter above</span></div></div>'+
+      '<span class="tag">Active bundle &middot; '+b.name+'</span><h3>'+b.size+'</h3><p>'+b.validity+' access &middot; expires '+fmtExpiry(wallet.expiresAt)+'</p>'+
+      priceRow+'</div>';
+  }
+  if(state==="go"){
+    return '<div class="card selected"><span class="tag">Ready to connect &middot; '+b.name+'</span><h3>'+b.size+'</h3><p>'+b.validity+' access &middot; expires '+fmtExpiry(wallet.expiresAt)+'</p>'+
+      priceRow+
+      '<button class="btn buy go" data-id="'+b.id+'" type="button">Connect</button></div>';
+  }
+  if(state==="exp"){
+    return '<div class="card"><span class="tag">'+b.name+' &middot; Expired</span><h3>'+b.size+'</h3><p>Expired '+fmtExpiry(wallet.expiresAt)+' &middot; buy again</p>'+
+      priceRow+
+      '<button class="btn buy" data-id="'+b.id+'" type="button">Buy again ('+b.tokens+' tk &middot; '+b.usd+')</button></div>';
+  }
+  var afford = wallet.tokens >= b.tokens;
+  return '<div class="card"><span class="tag">'+b.name+' &middot; '+b.validity+'</span><h3>'+b.size+'</h3><p>'+b.validity+' high-speed data &middot; '+b.usd+' fixed</p>'+
+    priceRow+
+    '<button class="btn buy" data-id="'+b.id+'" type="button"'+(afford?'':' disabled')+'>Buy ('+b.tokens+' tk &middot; '+b.usd+')</button></div>';
+}
+function renderBundles(){
+  purgeExpired();   /* expired packs drop back to buyable */
+  var h="";
+  for(var i=0;i<BUNDLES.length;i++){
+    var b=BUNDLES[i];
+    var st = "";
+    if(wallet.activeBundleId===b.id){
+      var pk = activePack();
+      if(pk && pk.expired){ st = "exp"; }
+      else if(wallet.connected){ st = "on"; }
+      else { st = "go"; }
+    }
+    h += cardHtml(b, st);
+  }
+  var g=document.getElementById("bundleGrid");
+  g.innerHTML=h;
+  var btns=g.querySelectorAll(".buy");
+  for(var j=0;j<btns.length;j++){
+    if(btns[j].classList.contains("go")){ btns[j].onclick=function(){ doConnect(this.dataset.id); }; }
+    else if(!btns[j].disabled){ btns[j].onclick=function(){ doBuy(this.dataset.id); }; }
+  }
+  updateMeter();
+}
+function doBuy(id){
+  var b=byId(id);
+  if(!b) return;
+  if(wallet.tokens < b.tokens){ return; }
+  wallet.tokens -= b.tokens;
+  stampPurchase(id);   /* fixed amount + fixed validity stamped: boughtAt/expiresAt */
+  updateWalletUI(); renderBundles();
+}
+function doConnect(id){
+  var b=byId(id);
+  if(!b) return;
+  if(isExpired()){ renderBundles(); return; }   /* expired packs must be bought again */
+  wallet.activeBundleId=id;
+  wallet.connected=true;
+  grantMacAccess();   /* hard-code this device MAC as allowed: purchase + Connect */
+  saveWallet(wallet);
+  renderBundles();                       /* now shows Online + refreshed meter */
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+
+/* ---- Live meter fed from MikroTik variables + fixed package quota/expiry ---- */
+var liveLeft = 0;
+function updateMeter(){
+  purgeExpired();   /* expired packs drop the live session, cards show "buy again" */
+  var b = wallet.activeBundleId ? byId(wallet.activeBundleId) : null;
+  if(b && isExpired()){ b = null; }   /* expired quota no longer counts */
+  var quota = b ? b.mb*1048576 : 0;   /* fixed hard-coded data amount */
+  var used = parseBytes(rt("in")) + parseBytes(rt("out"));
+  var left = Math.max(0, quota - used);
+  document.getElementById("rtBundle").textContent = b ? (b.name+" · "+b.size+" / "+b.validity+" · expires "+fmtExpiry(wallet.expiresAt)) : "No active bundle";
+  document.getElementById("mQuota").textContent = niceBytes(quota);
+  document.getElementById("mUsed").textContent = niceBytes(used);
+  document.getElementById("mLeft").textContent = b ? niceBytes(left) : "--";
+  var pct = quota>0 ? (used/quota*100) : 0;
+  if(pct>100) pct=100;
+  var meter=document.querySelector("#activeMeter .meter");
+  meter.style.setProperty("--p", pct.toFixed(1)+"%");
+  /* live time remaining */
+  var raw=rt("tleft");
+  liveLeft = raw ? parseDur(raw) : 0;
+  document.getElementById("rtLeft").textContent = liveLeft>0 ? fmtDur(liveLeft) : "--";
+}
+function readRT(){
+  enforceMacGate();   /* revoked/expired MAC loses the live session */
+  document.getElementById("rtName").textContent = wallet.deviceName || rt("username") || "Guest";
+  document.getElementById("rtIp").textContent = rt("ip")
+    ? ("IP: "+rt("ip")+(rt("mac")?(" &middot; MAC: "+rt("mac")):"")) : "--";
+  document.getElementById("rtUptime").textContent = rt("uptime") || "--";
+  document.getElementById("rtIn").textContent  = rt("in")  || "0 B";
+  document.getElementById("rtOut").textContent = rt("out") || "0 B";
+  var un = wallet.deviceName || rt("username"); if(un){ document.getElementById("av").textContent = un.charAt(0).toUpperCase(); }
+  updateMeter();
+}
+function tick(){
+  if(liveLeft>0){
+    liveLeft--;
+    document.getElementById("rtLeft").textContent = fmtDur(liveLeft);
+  }
+}
+
+/* ---- Init ---- */
+var wallet = loadWallet();
+if(!getActiveKey() || !wallet.deviceUser){ window.location.replace("login.html"); }
+document.getElementById("payConfirm").onclick = confirmPay;
+document.getElementById("payCancel").onclick = function(){ document.getElementById("payModal").classList.remove("show"); };
+document.getElementById("payModal").onclick = function(e){ if(e.target===this) this.classList.remove("show"); };
+/* Logout: end the MikroTik session and land back on the password entry screen. */
+(function(){
+  var lo = document.getElementById("logoutBtn");
+  if(!lo) return;
+  lo.onclick = function(e){
+    if(e && e.preventDefault) e.preventDefault();
+    wallet.connected = false;               /* end local session */
+    if(wallet.allowedMac){ revokeMac(wallet.allowedMac); wallet.allowedMac = ""; }
+    try { var _k = String((wallet && wallet.deviceUser) || getActiveKey() || "").replace(/\D/g, ""); revokeUserMacs(_k); } catch(e3){}
+    saveWallet(wallet);
+    try { localStorage.removeItem(SESSION_KEY); } catch(e2){}  /* sign out: next user starts clean */
+    var target = rt("logout");              /* $(link-logout) injected by the router */
+    if(target && target.indexOf("http") === 0){ window.location.href = target; return; }
+    window.location.href = "login.html";     /* fallback: password entry screen */
+    return false;
+  };
+})();
+updateWalletUI(); renderTopups(); renderBundles(); readRT();
+setInterval(tick, 1000);
+</script>
+<script>
+(function(){document.addEventListener('click',function(e){var t=e.target;if(!t||!t.closest)return;var bj=t.closest('.btn');if(!bj)return;var r=bj.getBoundingClientRect(),d=Math.max(r.width,r.height),s=document.createElement('span');s.className='rp';s.style.cssText='width:'+(d*2)+'px;height:'+(d*2)+'px;left:'+(e.clientX-r.left-d)+'px;top:'+(e.clientY-r.top-d)+'px;';bj.appendChild(s);setTimeout(function(){if(s.parentNode)s.parentNode.removeChild(s)},650);});})();
+</script>
+</body>
+</html>
