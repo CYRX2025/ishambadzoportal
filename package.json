@@ -2,7 +2,7 @@
   "name": "collaboana-landing-page",
   "version": "1.0.0",
   "description": "Collaboana Landing Page",
-  "main": "index.html",
+  "main": "login.html",
   "scripts": {
     "build": "echo 'No build required'"
   },
