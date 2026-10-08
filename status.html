@@ -218,10 +218,11 @@ body{
       <div class="meter"><i></i></div>
       <div class="meter-label"><span>Used: <b id="mUsed">0 B</b> / <b id="mQuota">--</b></span><span>Left: <b id="mLeft">--</b></span></div>
     </div>
-    <div class="stats">
-      <div class="stat"><div class="k">Session uptime</div><div class="v" id="rtUptime">--</div></div>
-      <div class="stat"><div class="k">Downloaded</div><div class="v" id="rtIn">0 B</div></div>
-      <div class="stat"><div class="k">Uploaded</div><div class="v" id="rtOut">0 B</div></div>
+    <!-- Live session stats: uptime / Downloaded / Uploaded hidden by request (feeds stay in #rt for the meter) -->
+    <div class="stats" style="grid-template-columns:1fr">
+      <div class="stat" style="display:none"><div class="k">Session uptime</div><div class="v" id="rtUptime">--</div></div>
+      <div class="stat" style="display:none"><div class="k">Downloaded</div><div class="v" id="rtIn">0 B</div></div>
+      <div class="stat" style="display:none"><div class="k">Uploaded</div><div class="v" id="rtOut">0 B</div></div>
       <div class="stat"><div class="k">Time left</div><div class="v" id="rtLeft">--</div></div>
     </div>
     <a class="btn ghost" id="statusLink" href="$(link-status)" style="margin-top:14px"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 5 A 7 7 0 0 1 5 19 M5 19 L3 16.5"/></svg> Refresh live data</a>
